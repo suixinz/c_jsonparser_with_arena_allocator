@@ -55,7 +55,6 @@ struct parse_buffer {
  *  Utility / helper functions
  * ============================================================ */
 
-/* Check if the buffer has at least n more bytes readable from current position */
 static inline bool buffer_can_lookahead(const parse_buffer* const buffer, size_t n){
 
     if(buffer == NULL){
@@ -66,7 +65,6 @@ static inline bool buffer_can_lookahead(const parse_buffer* const buffer, size_t
 
 }
 
-/* Return pointer to the character at current read position */
 static inline const unsigned char* buffer_at_curpos_pointer(const parse_buffer* const buffer){
 
     if(buffer == NULL || buffer->context == NULL){
@@ -77,21 +75,18 @@ static inline const unsigned char* buffer_at_curpos_pointer(const parse_buffer* 
 
 }
 
-/* Check if character c can start a JSON number (- or 0-9) */
 static inline bool is_number_start(const unsigned char c){
 
     return (c == '-') || (c >= '0' && c <= '9');
 
 }
 
-/* Check if character c is part of the number body (digits, exponent, sign, decimal point) */
 static inline bool is_number_body(const unsigned char c){
 
     return (c >= '0' && c <= '9') || (c == 'e') || (c == 'E') || (c == '+') || (c == '-') || (c == '.');
 
 }
 
-/* Skip whitespace characters (space, tab, newline, carriage return, etc.) */
 static void buffer_skip_whitespace(parse_buffer* const buffer){
 
     if(buffer == NULL){
@@ -105,7 +100,6 @@ static void buffer_skip_whitespace(parse_buffer* const buffer){
 }
 
 
-/* Check if c is a valid non-unicode escape character (\b \f \n \r \t \\ \/ \") */
 static inline bool is_escape_sequence_except_unicode(const unsigned char c){
 
     switch (c)
@@ -126,7 +120,6 @@ static inline bool is_escape_sequence_except_unicode(const unsigned char c){
 
 }
 
-/* Convert a non-unicode escape character to its actual character value */
 static inline unsigned char parse_escape_sequence_except_unicode(const unsigned char c){
 
     switch (c)
@@ -152,7 +145,6 @@ static inline unsigned char parse_escape_sequence_except_unicode(const unsigned 
 }
 
 
-/* Check if the string at str starts with \uXXXX or \UXXXX (4 hex digits) */
 static inline bool is_utf16(const unsigned char* str){
 
     if( str[0] != '\\' || (str[1] != 'u' && str[1] != 'U') ){
@@ -177,7 +169,6 @@ static inline bool is_utf16(const unsigned char* str){
 
 }
 
-/* Convert a single hex character (0-9, a-f, A-F) to its 0-15 value */
 static uint8_t uchar_to_hex(unsigned char c){
 
     if(c >= '0' && c <= '9'){
@@ -196,7 +187,6 @@ static uint8_t uchar_to_hex(unsigned char c){
 
 }
 
-/* Parse 4 hex digits into a uint16_t (big-endian within the 4-digit sequence) */
 static uint16_t parse_hex4(const unsigned char* str){
 
     uint16_t res = 0;
@@ -213,30 +203,28 @@ static uint16_t parse_hex4(const unsigned char* str){
 
 }
 
-/* Check if codepoint is a valid BMP character (not in surrogate range) */
+/* 判断是否为合法 BMP 字符（非代理区） */
 static bool is_bmp_char(uint16_t c) {
     return c < 0xD800 || c > 0xDFFF;
 }
 
-/* Check if codepoint is a high surrogate (U+D800 to U+DBFF) */
+/* 判断是否为高代理（high surrogate） */
 static int is_high_surrogate(uint16_t c) {
     return c >= 0xD800 && c <= 0xDBFF;
 }
 
-/* Check if codepoint is a low surrogate (U+DC00 to U+DFFF) */
+/* 判断是否为低代理（low surrogate） */
 static int is_low_surrogate(uint16_t c) {
     return c >= 0xDC00 && c <= 0xDFFF;
 }
 
-/* Convert UTF-16 surrogate pair (high, low) to a Unicode codepoint (U+10000 and above) */
+/* 将 UTF-16 代理对转换为 Unicode 码点 */
 static uint32_t surrogate_pair_to_codepoint(uint16_t high, uint16_t low) {
     return 0x10000
          + ((high - 0xD800) << 10)
          +  (low  - 0xDC00);
 }
 
-/* Encode a Unicode codepoint into UTF-8 bytes, writing up to 4 bytes into buf.
- * Returns the number of bytes written. Invalid codepoints emit U+FFFD. */
 static size_t parse_unicode_to_utf8(uint32_t codepoint, unsigned char* buf){
 
     if(buf == NULL){
@@ -244,25 +232,25 @@ static size_t parse_unicode_to_utf8(uint32_t codepoint, unsigned char* buf){
     }
 
     if(codepoint <= 0x7F){
-        // 1 byte: 0xxxxxxx
+        // 1 字节：0xxxxxxx
         buf[0] = (unsigned char)codepoint;
         return 1;
     }
     else if(codepoint >= 0x80 && codepoint <= 0x7FF){
-        // 2 bytes: 110xxxxx 10xxxxxx
+        // 2 字节：110xxxxx 10xxxxxx
         buf[0] = (unsigned char)(0xC0 | (codepoint >> 6));
         buf[1] = (unsigned char)(0x80 | (codepoint & 0x3F));
         return 2;
     }
     else if(codepoint >= 0x800 && codepoint <= 0xFFFF){
-        // 3 bytes: 1110xxxx 10xxxxxx 10xxxxxx
+        // 3 字节：1110xxxx 10xxxxxx 10xxxxxx
         buf[0] = (unsigned char)(0xE0 | (codepoint >> 12));
         buf[1] = (unsigned char)(0x80 | ((codepoint >> 6) & 0x3F));
         buf[2] = (unsigned char)(0x80 | (codepoint & 0x3F));
         return 3;
     }
     else if(codepoint >= 0x10000 && codepoint <= 0x10FFFF){
-        // 4 bytes: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+        // 4 字节：11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
         buf[0] = (unsigned char)(0xF0 | (codepoint >> 18));
         buf[1] = (unsigned char)(0x80 | ((codepoint >> 12) & 0x3F));
         buf[2] = (unsigned char)(0x80 | ((codepoint >> 6) & 0x3F));
@@ -270,7 +258,8 @@ static size_t parse_unicode_to_utf8(uint32_t codepoint, unsigned char* buf){
         return 4;
     }
     else{
-        // Invalid codepoint (> U+10FFFF): emit replacement character U+FFFD
+        // 非法码点（超过 U+10FFFF）
+        // 按规范写入 replacement character U+FFFD 的 UTF-8 编码
         buf[0] = 0xEF;
         buf[1] = 0xBF;
         buf[2] = 0xBD;
@@ -279,9 +268,6 @@ static size_t parse_unicode_to_utf8(uint32_t codepoint, unsigned char* buf){
 
 }
 
-/* Parse a JSON string value from the buffer.
- * Handles escape sequences and \uXXXX unicode, including surrogate pairs.
- * Returns allocated UTF-8 string, or NULL on error (buffer->code is set). */
 static unsigned char* parse_string(parse_buffer* const buffer){
 
     buffer_skip_whitespace(buffer);
@@ -397,7 +383,6 @@ static unsigned char* parse_string(parse_buffer* const buffer){
 }
 
 
-/* Parse a JSON null literal. Advances buffer position and validates trailing char. */
 cjson_t* parse_null(parse_buffer* const buffer){
 
     cjson_t* res_item = (cjson_t*)arena_calloc(buffer->arena_pool, 1, sizeof(cjson_t));
@@ -411,26 +396,10 @@ cjson_t* parse_null(parse_buffer* const buffer){
 
     buffer->cur_pos += 4;
 
-    // Strict mode: character after null must be whitespace, delimiter, or end of input
-    if (buffer_can_lookahead(buffer, 1)){
-
-        unsigned char next = buffer_at_curpos_pointer(buffer)[0];
-
-        if (next != ' ' && next != '\t' && next != '\n' && next != '\r'
-            && next != '}' && next != ']' && next != ','){
-
-            buffer->code = PARSE_ERROR_UNEXPECTED_CHAR;
-            return NULL;
-
-        }
-
-    }
-
     return res_item;
 
 }
 
-/* Parse a JSON true literal. Advances buffer position and validates trailing char. */
 cjson_t* parse_true(parse_buffer* const buffer){
 
     cjson_t* res_item = (cjson_t*)arena_calloc(buffer->arena_pool , 1, sizeof(cjson_t));
@@ -444,26 +413,10 @@ cjson_t* parse_true(parse_buffer* const buffer){
 
     buffer->cur_pos += 4;
 
-    // Strict mode: character after true must be whitespace, delimiter, or end of input
-    if (buffer_can_lookahead(buffer, 1)){
-
-        unsigned char next = buffer_at_curpos_pointer(buffer)[0];
-
-        if (next != ' ' && next != '\t' && next != '\n' && next != '\r'
-            && next != '}' && next != ']' && next != ','){
-
-            buffer->code = PARSE_ERROR_UNEXPECTED_CHAR;
-            return NULL;
-
-        }
-        
-    }
-
     return res_item;
 
 }
 
-/* Parse a JSON false literal. Advances buffer position and validates trailing char. */
 cjson_t* parse_false(parse_buffer* const buffer){
 
     cjson_t* res_item = (cjson_t*)arena_calloc(buffer->arena_pool , 1, sizeof(cjson_t));
@@ -477,26 +430,10 @@ cjson_t* parse_false(parse_buffer* const buffer){
 
     buffer->cur_pos += 5;
 
-    // Strict mode: character after false must be whitespace, delimiter, or end of input
-    if (buffer_can_lookahead(buffer, 1)){
-
-        unsigned char next = buffer_at_curpos_pointer(buffer)[0];
-
-        if (next != ' ' && next != '\t' && next != '\n' && next != '\r'
-            && next != '}' && next != ']' && next != ','){
-
-            buffer->code = PARSE_ERROR_UNEXPECTED_CHAR;
-            return NULL;
-
-        }
-        
-    }
-
     return res_item;
 
 }
 
-/* Parse a JSON number. Uses strtod for conversion. Returns cjson_number node. */
 cjson_t* parse_number(parse_buffer* const buffer){
 
     size_t cnt = 0;
@@ -554,7 +491,6 @@ cjson_t* parse_number(parse_buffer* const buffer){
 
 }
 
-/* Parse a JSON string value (after the opening quote). Returns cjson_string node. */
 cjson_t* parse_valuestring(parse_buffer* const buffer){
 
     if(buffer == NULL){
@@ -589,7 +525,6 @@ cjson_t* parse_valuestring(parse_buffer* const buffer){
 
 }
 
-/* Parse a JSON array. Children are linked via next/prev. Enforces nesting depth limit. */
 cjson_t* parse_array(parse_buffer* const buffer){
 
     if(buffer == NULL){
@@ -674,7 +609,6 @@ cjson_t* parse_array(parse_buffer* const buffer){
 
 }
 
-/* Parse a JSON object key (a quoted string). Returns the allocated key string. */
 static unsigned char* parse_keystring(parse_buffer* const buffer){
 
     if(buffer == NULL){
@@ -693,7 +627,6 @@ static unsigned char* parse_keystring(parse_buffer* const buffer){
 
 }
 
-/* Parse a JSON object. Key-value pairs are stored as child nodes with ->key set. */
 cjson_t* parse_object(parse_buffer* const buffer){
 
     if(buffer == NULL){
@@ -800,7 +733,6 @@ cjson_t* parse_object(parse_buffer* const buffer){
 
 }
 
-/* Dispatch function: examine the next character(s) and call the appropriate parse_* function. */
 cjson_t* cjson_parse_value(parse_buffer* const buffer){
 
     if(buffer == NULL || buffer->context == NULL || buffer->length == 0 || buffer->cur_pos == buffer->length){
@@ -841,7 +773,6 @@ cjson_t* cjson_parse_value(parse_buffer* const buffer){
 
 }
 
-/* Debug helper: print the buffer content up to current position */
 static void buffer_display(parse_buffer* buffer){
 
     if(buffer == NULL){
@@ -859,9 +790,6 @@ static void buffer_display(parse_buffer* buffer){
 
 }
 
-/* Public API: parse a JSON text string into a cjson_t tree using the given arena.
- * On success, *cjson points to the root node and "parse success." is printed.
- * On failure, buffer->code indicates the error and a message is printed. */
 void cjson_parse(const char* src, arena* const arena_pool, cjson_t** cjson){
 
     if(src == NULL){
@@ -961,8 +889,6 @@ void cjson_parse(const char* src, arena* const arena_pool, cjson_t** cjson){
 
 
 
-/* Check if the JSON node has array/object children that contain nested arrays/objects.
- * Used by display to decide whether to use multi-line formatting. */
 static bool has_complex_children(cjson_t* cjson){
 
     if(cjson == NULL){
@@ -989,7 +915,6 @@ static bool has_complex_children(cjson_t* cjson){
 
 }
 
-/* Print 2 spaces per nesting level for pretty-print indentation */
 static void display_leading_whitespace(size_t cur_nest_depth){
 
     for(size_t i = 0; i < cur_nest_depth; i++){
@@ -998,7 +923,6 @@ static void display_leading_whitespace(size_t cur_nest_depth){
 
 }
 
-/* Recursively pretty-print a JSON node to stdout with indentation */
 static void cjson_display_with_nestinfo(cjson_t* cjson, size_t cur_nest_depth){
 
     if(cjson == NULL){
@@ -1137,7 +1061,6 @@ static void cjson_display_with_nestinfo(cjson_t* cjson, size_t cur_nest_depth){
 
 }
 
-/* Public API: pretty-print the parsed JSON tree to stdout */
 void cjson_display(cjson_t* cjson){
 
     cjson_display_with_nestinfo(cjson, 0);
@@ -1145,8 +1068,6 @@ void cjson_display(cjson_t* cjson){
 }
 
 
-/* Calculate the UTF-8 byte length needed to escape a string for JSON output.
- * Accounts for escape sequences and \u00XX encoding of control characters. */
 static size_t cjson_stringify_size_string(const unsigned char* str){
 
     size_t len = 0;
@@ -1155,7 +1076,7 @@ static size_t cjson_stringify_size_string(const unsigned char* str){
         
         if (*str == '\"' || *str == '\\' || *str == '\n' || *str == '\t' ||
             *str == '\r' || *str == '\b' || *str == '\f'){
-            len += 2;  // escaped as two characters
+            len += 2;  // 转义成两个字符
         } 
         else if (*str < 0x20){
             len += 6;  // \u00XX
@@ -1171,8 +1092,6 @@ static size_t cjson_stringify_size_string(const unsigned char* str){
 
 }
 
-/* Pass 1: calculate the exact byte size needed to serialize the JSON tree.
- * Returns the total size (including null terminator, added by caller). */
 static size_t cjson_stringify_size(const cjson_t* cjson){
 
     if(cjson == NULL){
@@ -1188,15 +1107,16 @@ static size_t cjson_stringify_size(const cjson_t* cjson){
         case cjson_false:  return 5;
 
         case cjson_number: {
-            // Rough estimate: max double string length ~24 chars
-            return 24;
+            // 粗略估算：最大 double 字符串长度约 24 字符
+            // 严格做法：用 snprintf(NULL, 0, "%.17g", num) 算
+            return 24;  // 简单粗暴，多分配一点没事（arena 不怕）
         }
 
         case cjson_string: {
 
             if (cjson->value.string == NULL) return 2; // ""
 
-            size_t len = 2; // two quotes
+            size_t len = 2; // 两个引号
 
             len += cjson_stringify_size_string(cjson->value.string);
 
@@ -1215,7 +1135,7 @@ static size_t cjson_stringify_size(const cjson_t* cjson){
 
                 if(cur->next){
                     len += 2;
-                } //comma + space
+                } //逗号 + 空格
 
                 cur = cur->next;
 
@@ -1233,10 +1153,10 @@ static size_t cjson_stringify_size(const cjson_t* cjson){
             while (cur){
 
                 len += cjson_stringify_size_string(cur->key);
-                len += 3; //space + colon + space
-                len += cjson_stringify_size(cur); //value length
+                len += 3; //空格 + 冒号 + 空格
+                len += cjson_stringify_size(cur); //值的长度
         
-                if (cur->next) len += 2; //comma + space
+                if (cur->next) len += 2; //逗号 + 空格
                 cur = cur->next;
 
             }
@@ -1251,7 +1171,6 @@ static size_t cjson_stringify_size(const cjson_t* cjson){
 
 }
 
-/* Write a string value into the output buffer, escaping special characters as needed */
 static void cjson_stringify_write_string(unsigned char* str, unsigned char* buf, size_t* pos){
 
     while(*str){
@@ -1264,7 +1183,7 @@ static void cjson_stringify_write_string(unsigned char* str, unsigned char* buf,
         else if(*str == '\b') { buf[(*pos)++] = '\\'; buf[(*pos)++] = 'b';  }
         else if(*str == '\f') { buf[(*pos)++] = '\\'; buf[(*pos)++] = 'f';  }
         else if(*str < 0x20){
-            // Control character encoded as \u00XX
+            // 控制字符写成 \u00XX
             static const char hex[] = "0123456789ABCDEF";
             buf[(*pos)++] = '\\'; buf[(*pos)++] = 'u';
             buf[(*pos)++] = '0'; buf[(*pos)++] = '0';
@@ -1282,7 +1201,6 @@ static void cjson_stringify_write_string(unsigned char* str, unsigned char* buf,
 
 }
 
-/* Pass 2: recursively write the JSON tree into the pre-allocated buffer at *pos */
 static void cjson_stringify_write(cjson_t* cjson, unsigned char* buf, size_t* pos){
 
     if (cjson == NULL){
@@ -1359,7 +1277,7 @@ static void cjson_stringify_write(cjson_t* cjson, unsigned char* buf, size_t* po
 
             while(cur){
 
-                // write key
+                // 写 key
                 buf[(*pos)++] = '\"';
                 cjson_stringify_write_string(cur->key, buf, pos);
                 buf[(*pos)++] = '\"';
@@ -1367,7 +1285,7 @@ static void cjson_stringify_write(cjson_t* cjson, unsigned char* buf, size_t* po
                 memcpy(buf + *pos, " : ", 3);
                 *pos += 3;
 
-                // write value
+                // 写 value
                 cjson_stringify_write(cur, buf, pos);
 
                 if (cur->next){
@@ -1389,9 +1307,6 @@ static void cjson_stringify_write(cjson_t* cjson, unsigned char* buf, size_t* po
 
 }
 
-/* Public API: serialize a parsed JSON tree back to a JSON text string.
- * Uses two-pass approach (size calculation + write) since arena has no realloc.
- * Returns arena-allocated string, or NULL on failure. */
 unsigned char* cjson_stringify(cjson_t* cjson, arena* arena_pool){
 
     if(cjson == NULL){
@@ -1413,7 +1328,6 @@ unsigned char* cjson_stringify(cjson_t* cjson, arena* arena_pool){
 }
 
 
-/* Recursively compute the maximum depth of the JSON tree (for diagnostics) */
 static size_t cjson_depth(cjson_t* cjson){
 
     if(cjson == NULL){
@@ -1441,3 +1355,5 @@ static size_t cjson_depth(cjson_t* cjson){
     return max_depth + 1;
 
 }
+
+
