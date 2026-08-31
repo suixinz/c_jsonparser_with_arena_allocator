@@ -4,8 +4,9 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdint.h>
-#include "arena.h"
+#include <stddef.h> //size_t
+#include <stdint.h> //SIZE_MAX
+#include "ARENA_LIB/arena.h"
 
 
 
@@ -17,14 +18,10 @@
 
 
 
-typedef enum cjson_type cjson_type;
-
 typedef struct cjson_t cjson_t;
 
-typedef union cjson_data cjson_data;
-
-/* Parse error codes, returned via parse_buffer->code */
-typedef enum parse_error_t{
+/* Parse error type, returned via parse_buffer->code */
+typedef enum error_type{
 
     PARSE_OK = 0,
 
@@ -51,33 +48,19 @@ typedef enum parse_error_t{
     /* ---- memory ---- */
     PARSE_ERROR_OOM                   /* arena allocation failed */
 
+}error_type;
+
+typedef struct parse_error_t{
+
+    error_type err_type;
+    size_t position;
+
 }parse_error_t;
-
-typedef struct parse_buffer parse_buffer;
-
-
-/* ---- individual parsers (called by cjson_parse_value) ---- */
-cjson_t* parse_null(parse_buffer* const buffer);
-
-cjson_t* parse_true(parse_buffer* const buffer);
-
-cjson_t* parse_false(parse_buffer* const buffer);
-
-cjson_t* parse_number(parse_buffer* const buffer);
-
-cjson_t* parse_valuestring(parse_buffer* const buffer);
-
-cjson_t* parse_array(parse_buffer* const buffer);
-
-cjson_t* parse_object(parse_buffer* const buffer);
-
-/* Dispatcher: reads the next character and calls the appropriate parser */
-cjson_t* cjson_parse_value(parse_buffer* const buffer);
 
 /* Main entry point: parse a JSON string into a cjson_t tree.
  * On success, *cjson points to the root node and buffer->code == PARSE_OK.
  * Caller must provide a valid arena; all nodes are allocated from it. */
-void cjson_parse(const char* src, arena* const arena_pool, cjson_t** cjson);
+parse_error_t cjson_parse(const char* src, arena* const arena_pool, cjson_t** cjson);
 
 /* Pretty-print the parsed JSON tree to stdout */
 void cjson_display(cjson_t* cjson);
@@ -85,4 +68,8 @@ void cjson_display(cjson_t* cjson);
 /* Serialize a cjson_t tree back to a JSON string.
  * Returns a newly allocated string from arena_pool, or NULL on failure. */
 unsigned char* cjson_stringify(cjson_t* cjson, arena* arena_pool);
+
+/* Recursively search for a child node by key in an object or array.
+ * Returns the first matching node, or NULL if not found. */
+cjson_t* cjson_get_item(const char* key, cjson_t* object);
 

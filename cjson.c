@@ -1,7 +1,7 @@
 #include "cjson.h"
 
 /* JSON value types */
-enum cjson_type{
+typedef enum cjson_type{
 
     cjson_true,
     cjson_false,
@@ -11,17 +11,17 @@ enum cjson_type{
     cjson_array,
     cjson_object
 
-};
+}cjson_type;
 
 /* Union holding the actual value data for a JSON node.
  * Which member is valid depends on the node's type. */
-union cjson_data{
+typedef union cjson_data{
 
     double   number; /* cjson_number */
     char*    string; /* cjson_string */ 
     cjson_t* child;  /* cjson_array / cjson_object: linked list of children */
 
-};
+}cjson_data;
 
 /* A single JSON value node.
  * Arrays and objects are stored as a doubly-linked list of child nodes,
@@ -39,7 +39,7 @@ struct cjson_t{
 };
 
 /* Parser state, passed around all parse_* functions */
-struct parse_buffer {
+typedef struct parse_buffer{
 
     const char*     context;           /* raw JSON text */
     size_t          length;            /* length of context */
@@ -47,9 +47,9 @@ struct parse_buffer {
     size_t          cur_pos;           /* current read position */
 
     arena*          arena_pool;        /* arena for all allocations */
-    parse_error_t   code;              /* error code, PARSE_OK if no error */
+    error_type      code;              /* error code, PARSE_OK if no error */
 
-};
+}parse_buffer;
 
 /* ============================================================
  *  Utility / helper functions
@@ -61,7 +61,7 @@ static inline bool buffer_can_lookahead(const parse_buffer* const buffer, size_t
         return false;
     }
 
-    return (buffer->cur_pos + n) < buffer->length;
+    return (buffer->cur_pos + n) <= buffer->length;
 
 }
 
@@ -85,6 +85,50 @@ static inline bool is_number_body(const unsigned char c){
 
     return (c >= '0' && c <= '9') || (c == 'e') || (c == 'E') || (c == '+') || (c == '-') || (c == '.');
 
+}
+
+static bool is_valid_json_number(const unsigned char* str, size_t len) {
+    if (len == 0) return false;
+
+    const unsigned char* p = str;
+
+    /* optional minus sign */
+    if (*p == '-') {
+        p++;
+        if (p == str + len) return false; /* - alone is not a number */
+    }
+
+    /* integer part */
+    if (*p == '0') {
+        p++;
+        /* 0 cannot be followed by another digit */
+        if (p < str + len && *p >= '0' && *p <= '9') return false;
+    } else if (*p >= '1' && *p <= '9') {
+        p++;
+        while (p < str + len && *p >= '0' && *p <= '9') p++;
+    } else {
+        return false; /* must start with a digit */
+    }
+
+    /* optional fraction part */
+    if (p < str + len && *p == '.') {
+        p++;
+        if (p == str + len || *p < '0' || *p > '9') return false; /* need at least one digit after . */
+        p++;
+        while (p < str + len && *p >= '0' && *p <= '9') p++;
+    }
+
+    /* optional exponent part */
+    if (p < str + len && (*p == 'e' || *p == 'E')) {
+        p++;
+        if (p < str + len && (*p == '+' || *p == '-')) p++;
+        if (p == str + len || *p < '0' || *p > '9') return false; /* need at least one digit in exponent */
+        p++;
+        while (p < str + len && *p >= '0' && *p <= '9') p++;
+    }
+
+    /* must have consumed the entire string (no trailing garbage like _000) */
+    return (p == str + len);
 }
 
 static void buffer_skip_whitespace(parse_buffer* const buffer){
@@ -145,9 +189,9 @@ static inline unsigned char parse_escape_sequence_except_unicode(const unsigned 
 }
 
 
-static inline bool is_utf16(const unsigned char* str){
+static inline bool is_hex_escape(const unsigned char* str){
 
-    if( str[0] != '\\' || (str[1] != 'u' && str[1] != 'U') ){
+    if( str[0] != '\\' || (str[1] != 'u') ){
         return false;
     }
 
@@ -203,29 +247,25 @@ static uint16_t parse_hex4(const unsigned char* str){
 
 }
 
-/* 判断是否为合法 BMP 字符（非代理区） */
 static bool is_bmp_char(uint16_t c) {
     return c < 0xD800 || c > 0xDFFF;
 }
 
-/* 判断是否为高代理（high surrogate） */
 static int is_high_surrogate(uint16_t c) {
     return c >= 0xD800 && c <= 0xDBFF;
 }
 
-/* 判断是否为低代理（low surrogate） */
 static int is_low_surrogate(uint16_t c) {
     return c >= 0xDC00 && c <= 0xDFFF;
 }
 
-/* 将 UTF-16 代理对转换为 Unicode 码点 */
-static uint32_t surrogate_pair_to_codepoint(uint16_t high, uint16_t low) {
+static uint32_t surrogate_pair_to_unicode(uint16_t high, uint16_t low) {
     return 0x10000
          + ((high - 0xD800) << 10)
          +  (low  - 0xDC00);
 }
 
-static size_t parse_unicode_to_utf8(uint32_t codepoint, unsigned char* buf){
+static size_t unicode_to_utf8(uint32_t codepoint, unsigned char* buf){
 
     if(buf == NULL){
         return 0;
@@ -270,12 +310,18 @@ static size_t parse_unicode_to_utf8(uint32_t codepoint, unsigned char* buf){
 
 static unsigned char* parse_string(parse_buffer* const buffer){
 
-    buffer_skip_whitespace(buffer);
-
     size_t read_uchar  = 0;
     size_t valid_uchar = 0;
 
     while (buffer_can_lookahead(buffer, read_uchar) && buffer_at_curpos_pointer(buffer)[read_uchar] != '\"'){
+
+        /* reject unescaped control characters (< 0x20) */
+        if (buffer_at_curpos_pointer(buffer)[read_uchar] < 0x20){
+
+            buffer->code = PARSE_ERROR_INVALID_STRING;
+            return NULL;
+
+        }
 
         if(buffer_at_curpos_pointer(buffer)[read_uchar] == '\\'){
 
@@ -283,7 +329,7 @@ static unsigned char* parse_string(parse_buffer* const buffer){
                 read_uchar  += 2;
                 valid_uchar += 1;
             }
-            else if(buffer_can_lookahead(buffer, read_uchar + 6) && is_utf16(buffer_at_curpos_pointer(buffer) + read_uchar)){
+            else if(buffer_can_lookahead(buffer, read_uchar + 6) && is_hex_escape(buffer_at_curpos_pointer(buffer) + read_uchar)){
                 read_uchar  += 6;
                 valid_uchar += 4;
             }
@@ -333,7 +379,7 @@ static unsigned char* parse_string(parse_buffer* const buffer){
 
                 if(is_bmp_char(u1)){
 
-                    str_pos += parse_unicode_to_utf8(u1, str + str_pos);
+                    str_pos += unicode_to_utf8(u1, str + str_pos);
                     src_pos += 6;
 
                 }
@@ -344,7 +390,7 @@ static unsigned char* parse_string(parse_buffer* const buffer){
                         return NULL;
                     }
 
-                    if(buffer_can_lookahead(buffer, src_pos + 7) == false || is_utf16(buffer_at_curpos_pointer(buffer) + src_pos + 6) == false){
+                    if(buffer_can_lookahead(buffer, src_pos + 7) == false || is_hex_escape(buffer_at_curpos_pointer(buffer) + src_pos + 6) == false){
                         buffer->code = PARSE_ERROR_INVALID_UNICODE;
                         return NULL;
                     }
@@ -356,7 +402,7 @@ static unsigned char* parse_string(parse_buffer* const buffer){
                         return NULL;
                     }
 
-                    str_pos += parse_unicode_to_utf8(surrogate_pair_to_codepoint(u1, u2), str + str_pos);
+                    str_pos += unicode_to_utf8(surrogate_pair_to_unicode(u1, u2), str + str_pos);
                     src_pos += 12;
 
                 }
@@ -383,7 +429,9 @@ static unsigned char* parse_string(parse_buffer* const buffer){
 }
 
 
-cjson_t* parse_null(parse_buffer* const buffer){
+static cjson_t* cjson_parse_value(parse_buffer* const buffer);
+
+static cjson_t* parse_null(parse_buffer* const buffer){
 
     cjson_t* res_item = (cjson_t*)arena_calloc(buffer->arena_pool, 1, sizeof(cjson_t));
 
@@ -400,7 +448,7 @@ cjson_t* parse_null(parse_buffer* const buffer){
 
 }
 
-cjson_t* parse_true(parse_buffer* const buffer){
+static cjson_t* parse_true(parse_buffer* const buffer){
 
     cjson_t* res_item = (cjson_t*)arena_calloc(buffer->arena_pool , 1, sizeof(cjson_t));
 
@@ -417,7 +465,7 @@ cjson_t* parse_true(parse_buffer* const buffer){
 
 }
 
-cjson_t* parse_false(parse_buffer* const buffer){
+static cjson_t* parse_false(parse_buffer* const buffer){
 
     cjson_t* res_item = (cjson_t*)arena_calloc(buffer->arena_pool , 1, sizeof(cjson_t));
 
@@ -434,7 +482,7 @@ cjson_t* parse_false(parse_buffer* const buffer){
 
 }
 
-cjson_t* parse_number(parse_buffer* const buffer){
+static cjson_t* parse_number(parse_buffer* const buffer){
 
     size_t cnt = 0;
 
@@ -449,6 +497,11 @@ cjson_t* parse_number(parse_buffer* const buffer){
     }
 
     if(cnt == 0){
+        buffer->code = PARSE_ERROR_INVALID_NUMBER;
+        return NULL;
+    }
+
+    if(is_valid_json_number(buffer_at_curpos_pointer(buffer), cnt) == false){
         buffer->code = PARSE_ERROR_INVALID_NUMBER;
         return NULL;
     }
@@ -491,7 +544,7 @@ cjson_t* parse_number(parse_buffer* const buffer){
 
 }
 
-cjson_t* parse_valuestring(parse_buffer* const buffer){
+static cjson_t* parse_valuestring(parse_buffer* const buffer){
 
     if(buffer == NULL){
         return NULL;
@@ -525,7 +578,7 @@ cjson_t* parse_valuestring(parse_buffer* const buffer){
 
 }
 
-cjson_t* parse_array(parse_buffer* const buffer){
+static cjson_t* parse_array(parse_buffer* const buffer){
 
     if(buffer == NULL){
         return NULL;
@@ -570,14 +623,30 @@ cjson_t* parse_array(parse_buffer* const buffer){
 
         buffer_skip_whitespace(buffer);
 
-        if(buffer_can_lookahead(buffer, 1) && buffer_at_curpos_pointer(buffer)[0] == ','){
+        if (!buffer_can_lookahead(buffer, 1)){
+
+            buffer->code = PARSE_ERROR_UNMATCHED_BRACKET;
+            return NULL;
+
+        }
+
+        unsigned char next = buffer_at_curpos_pointer(buffer)[0];
+
+        if (next != ',' && next != ']') {
+
+            buffer->code = PARSE_ERROR_UNMATCHED_BRACKET;
+            return NULL;
+
+        }
+
+        if(next == ','){
 
             buffer->cur_pos++;
 
             buffer_skip_whitespace(buffer);
 
             if(buffer_can_lookahead(buffer, 1) && buffer_at_curpos_pointer(buffer)[0] == ']'){
-                buffer->code = PARSE_ERROR_TRAILING_COMMA;
+                buffer->code = PARSE_ERROR_INVALID_ARRAY;
                 return NULL;
             }
 
@@ -627,7 +696,7 @@ static unsigned char* parse_keystring(parse_buffer* const buffer){
 
 }
 
-cjson_t* parse_object(parse_buffer* const buffer){
+static cjson_t* parse_object(parse_buffer* const buffer){
 
     if(buffer == NULL){
         return NULL;
@@ -733,7 +802,7 @@ cjson_t* parse_object(parse_buffer* const buffer){
 
 }
 
-cjson_t* cjson_parse_value(parse_buffer* const buffer){
+static cjson_t* cjson_parse_value(parse_buffer* const buffer){
 
     if(buffer == NULL || buffer->context == NULL || buffer->length == 0 || buffer->cur_pos == buffer->length){
         buffer->code = PARSE_ERROR_UNEXPECTED_EOF;
@@ -773,37 +842,27 @@ cjson_t* cjson_parse_value(parse_buffer* const buffer){
 
 }
 
-static void buffer_display(parse_buffer* buffer){
+parse_error_t cjson_parse(const char* src, arena* const arena_pool, cjson_t** const cjson){
 
-    if(buffer == NULL){
-        return;
-    }
-
-    printf("the stop place is %lu\n\n", buffer->cur_pos);
-    printf("The parsed string is-->");
-
-    unsigned char* str = (unsigned char*)calloc(buffer->cur_pos + 1, sizeof(unsigned char));
-
-    memcpy(str, buffer->context, buffer->cur_pos);
-
-    printf("%s\n\n", str);
-
-}
-
-void cjson_parse(const char* src, arena* const arena_pool, cjson_t** cjson){
+    parse_error_t err = {
+        .err_type = PARSE_OK,
+        .position = 0
+    };
 
     if(src == NULL){
-        return;
+        err.err_type = PARSE_ERROR_EMPTY_INPUT;
+        return err;
     }
 
     if(arena_pool == NULL){
-        return;
+        err.err_type = PARSE_ERROR_OOM;
+        return err;
     }
 
     parse_buffer src_buffer = {
 
         .context = (const unsigned char*)src,
-        .length  = strlen(src) + sizeof(""),
+        .length  = strlen(src),
         .cur_nesting_depth = 0,
         .cur_pos = 0,
         .arena_pool = arena_pool,
@@ -814,76 +873,24 @@ void cjson_parse(const char* src, arena* const arena_pool, cjson_t** cjson){
     buffer_skip_whitespace(&src_buffer);
 
     if(src_buffer.length == src_buffer.cur_pos){
-        src_buffer.code = PARSE_ERROR_EMPTY_INPUT;
-        return;
+        err.err_type = PARSE_ERROR_EMPTY_INPUT;
+        return err;
     }
 
     *cjson = cjson_parse_value(&src_buffer);
 
-    if(src_buffer.code == PARSE_OK){
-        printf("parse success.\n\n");
+    
+    buffer_skip_whitespace(&src_buffer);
+    if (src_buffer.cur_pos != src_buffer.length){
+        err.err_type = PARSE_ERROR_UNEXPECTED_CHAR;
+        err.position = src_buffer.cur_pos;
+        return err;
     }
-    else{
 
-        printf("the failed position is %lu.\n\n", src_buffer.cur_pos);
+    err.err_type = src_buffer.code;
+    err.position = src_buffer.cur_pos;
 
-        switch (src_buffer.code)
-        {
-        case PARSE_ERROR_UNEXPECTED_CHAR:
-            printf("Unexpected char.\n\n");
-            break;
-        
-        case PARSE_ERROR_UNEXPECTED_EOF:
-            printf("Unexpected EOF.\n\n");
-            break;
-
-        case PARSE_ERROR_MISSING_COLON:
-            printf("Expected ':' after object key.\n\n");
-            break;
-
-        case PARSE_ERROR_EMPTY_INPUT:
-            printf("Empty source string.\n\n");
-            break;
-        
-        case PARSE_ERROR_TRAILING_COMMA:
-            printf("Trailing comma.\n\n");
-            break;
-
-        case PARSE_ERROR_INVALID_NUMBER:
-            printf("Invalid number.\n\n");
-            break;
-        
-        case PARSE_ERROR_INVALID_STRING:
-            printf("String parsing failed.\n\n");
-            break;
-        
-        case PARSE_ERROR_INVALID_ESCAPE:
-            printf("Invaid escape seuqence.\n\n");
-            break;
-
-        case PARSE_ERROR_INVALID_UNICODE:
-            printf("Invalid unicode.\n\n");
-            break;
-
-        case PARSE_ERROR_UNMATCHED_BRACKET:
-            printf("Unmatched bracket.\n\n");
-            break;
-        
-        case PARSE_ERROR_UNMATCHED_BRACE:
-            printf("Unmatched brace.\n\n");
-            break;
-
-        case PARSE_ERROR_NEST_TOO_DEEP:
-            printf("Out of the nest limit.\n\n");
-            break;
-
-        case PARSE_ERROR_OOM:
-            printf("Out of memory.\n\n");
-            break;
-
-        }
-
-    }
+    return err;
 
 }
 
@@ -1328,32 +1335,87 @@ unsigned char* cjson_stringify(cjson_t* cjson, arena* arena_pool){
 }
 
 
-static size_t cjson_depth(cjson_t* cjson){
+cjson_t* cjson_get_item(const char* key, cjson_t* object){
 
-    if(cjson == NULL){
-        return 0;
+    /* Reject NULL inputs */
+    if(key == NULL || object == NULL){
+        return NULL;
     }
 
-    size_t max_depth = 0;
-
-    cjson_t* current_item = NULL;
-
-    if(cjson->type == cjson_array || cjson->type == cjson_object){
-        current_item = cjson->value.child;
+    /* Only containers can hold child nodes to search */
+    if(object->type != cjson_array && object->type != cjson_object){
+        return NULL;
     }
 
-    while(current_item != NULL){
+    /* Traverse direct children of this container */
+    cjson_t* cur_item = object->value.child;
 
-        size_t cur_depth = cjson_depth(current_item);
+    while(cur_item != NULL){
 
-        max_depth = max_depth > cur_depth ? max_depth : cur_depth;
+        /* Check if this child's key matches */
+        if(cur_item->key != NULL && strcmp(key, cur_item->key) == 0){
+            return cur_item;
+        }
 
-        current_item = current_item->next;
-        
+        /* Recursively search into this child's subtree */
+        cjson_t* item = cjson_get_item(key, cur_item);
+
+        if(item != NULL){
+            return item;
+        }
+
+        cur_item = cur_item->next;
+
     }
 
-    return max_depth + 1;
+    /* Not found in this subtree */
+    return NULL;
 
 }
+
+// static size_t cjson_depth(cjson_t* cjson){
+
+//     if(cjson == NULL){
+//         return 0;
+//     }
+
+//     size_t max_depth = 0;
+
+//     cjson_t* current_item = NULL;
+
+//     if(cjson->type == cjson_array || cjson->type == cjson_object){
+//         current_item = cjson->value.child;
+//     }
+
+//     while(current_item != NULL){
+
+//         size_t cur_depth = cjson_depth(current_item);
+
+//         max_depth = max_depth > cur_depth ? max_depth : cur_depth;
+
+//         current_item = current_item->next;
+        
+//     }
+
+//     return max_depth + 1;
+
+// }
+
+// static void buffer_display(const parse_buffer* buffer){
+
+//     if(buffer == NULL){
+//         return;
+//     }
+
+//     printf("the stop place is %lu\n\n", buffer->cur_pos);
+//     printf("The parsed string is-->");
+
+//     unsigned char* str = (unsigned char*)calloc(buffer->cur_pos + 1, sizeof(unsigned char));
+
+//     memcpy(str, buffer->context, buffer->cur_pos);
+
+//     printf("%s\n\n", str);
+
+// }
 
 
